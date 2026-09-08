@@ -20,7 +20,7 @@ use parking_lot::Mutex;
 use webrtc_sys::{peer_connection_factory as sys_pcf, rtc_error as sys_err, webrtc as sys_rtc};
 
 use crate::{
-    audio_source::native::NativeAudioSource,
+    audio_source::{native::NativeAudioSource, AudioSourceOptions},
     audio_track::RtcAudioTrack,
     imp::{audio_track as imp_at, peer_connection as imp_pc, video_track as imp_vt},
     peer_connection::PeerConnection,
@@ -125,12 +125,32 @@ impl PeerConnectionFactory {
     ///
     /// This requires that `enable_platform_adm()` was called first.
     /// The track will capture audio from the selected recording device.
-    pub fn create_device_audio_track(&self, label: &str) -> RtcAudioTrack {
+    /// `options` are the source's processing switches; the send path applies
+    /// them to the APM whenever the track is sent, so pass the same values
+    /// `set_audio_processing` was given.
+    pub fn create_device_audio_track(
+        &self,
+        label: &str,
+        options: AudioSourceOptions,
+    ) -> RtcAudioTrack {
         RtcAudioTrack {
             handle: imp_at::RtcAudioTrack {
-                sys_handle: self.sys_handle.create_device_audio_track(label.to_string()),
+                sys_handle: self
+                    .sys_handle
+                    .create_device_audio_track(label.to_string(), options.into()),
             },
         }
+    }
+
+    /// Configure WebRTC's software audio processing module -- echo
+    /// cancellation, noise suppression and automatic gain control -- for every
+    /// audio send stream of this factory, taking effect immediately.
+    pub fn set_audio_processing(&self, options: AudioSourceOptions) {
+        self.sys_handle.set_audio_processing(
+            options.echo_cancellation,
+            options.noise_suppression,
+            options.auto_gain_control,
+        );
     }
 
     pub fn get_rtp_sender_capabilities(&self, media_type: MediaType) -> RtpCapabilities {

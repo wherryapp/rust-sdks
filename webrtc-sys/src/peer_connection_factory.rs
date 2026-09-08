@@ -57,6 +57,7 @@ pub mod ffi {
         type IceConnectionState = crate::peer_connection::ffi::IceConnectionState;
         type IceGatheringState = crate::peer_connection::ffi::IceGatheringState;
         type AudioTrackSource = crate::audio_track::ffi::AudioTrackSource;
+        type AudioSourceOptions = crate::audio_track::ffi::AudioSourceOptions;
         type VideoTrackSource = crate::video_track::ffi::VideoTrackSource;
         type RtpCapabilities = crate::rtp_parameters::ffi::RtpCapabilities;
         type AudioTrack = crate::audio_track::ffi::AudioTrack;
@@ -115,11 +116,24 @@ pub mod ffi {
             source: SharedPtr<AudioTrackSource>,
         ) -> SharedPtr<AudioTrack>;
 
-        // Create an audio track that uses the ADM for capture (Platform ADM mode)
+        // Create an audio track that uses the ADM for capture (Platform ADM mode).
+        // `options` become the source's AudioOptions, which the send path
+        // applies to the APM every time the track is (re)sent -- publish,
+        // unmute -- so they must agree with set_audio_processing below.
         fn create_device_audio_track(
             self: &PeerConnectionFactory,
             label: String,
+            options: AudioSourceOptions,
         ) -> SharedPtr<AudioTrack>;
+
+        // Configure the software audio processing module (AEC, NS, AGC) for
+        // every audio send stream, live.
+        fn set_audio_processing(
+            self: &PeerConnectionFactory,
+            echo_cancellation: bool,
+            noise_suppression: bool,
+            auto_gain_control: bool,
+        );
 
         fn rtp_sender_capabilities(
             self: &PeerConnectionFactory,

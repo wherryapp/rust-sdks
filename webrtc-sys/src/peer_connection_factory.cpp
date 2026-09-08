@@ -192,7 +192,11 @@ PeerConnectionFactory::PeerConnectionFactory(
       std::move(std::make_unique<livekit_ffi::VideoDecoderFactory>());
   dependencies.audio_encoder_factory = webrtc::CreateBuiltinAudioEncoderFactory();
   dependencies.audio_decoder_factory = webrtc::CreateBuiltinAudioDecoderFactory();
-  dependencies.audio_processing_builder = std::make_unique<webrtc::BuiltinAudioProcessingBuilder>();
+  // Build the APM ourselves and hand the factory a builder that returns it,
+  // so set_audio_processing can reconfigure it later.
+  audio_processing_ = webrtc::BuiltinAudioProcessingBuilder().Build(env_);
+  dependencies.audio_processing_builder =
+      webrtc::CustomAudioProcessing(audio_processing_);
 
   webrtc::EnableMedia(dependencies);
   peer_factory_ =
@@ -224,6 +228,12 @@ std::shared_ptr<PeerConnection> PeerConnectionFactory::create_peer_connection(
         webrtc::RTCErrorType::INTERNAL_ERROR, "failed to initialize pc"))));
   }
 
+  // The voice engine's lazy Init (first PeerConnection) has just applied
+  // its own defaults over the APM; put the requested switches back.
+  if (audio_processing_switches_) {
+    apply_audio_processing_switches(*audio_processing_switches_);
+  }
+
   return pc;
 }
 
@@ -243,13 +253,45 @@ std::shared_ptr<AudioTrack> PeerConnectionFactory::create_audio_track(
           peer_factory_->CreateAudioTrack(label.c_str(), source->get().get())));
 }
 
+void PeerConnectionFactory::set_audio_processing(bool echo_cancellation,
+                                                 bool noise_suppression,
+                                                 bool auto_gain_control) const {
+  audio_processing_switches_ = AudioProcessingSwitches{
+      echo_cancellation, noise_suppression, auto_gain_control};
+  apply_audio_processing_switches(*audio_processing_switches_);
+}
+
+void PeerConnectionFactory::apply_audio_processing_switches(
+    const AudioProcessingSwitches& switches) const {
+  if (!audio_processing_) {
+    RTC_LOG(LS_WARNING) << "set_audio_processing: no audio processing module";
+    return;
+  }
+  // Start from the live config so everything the voice engine set at init
+  // (the high-pass filter, the analog gain controller's tuning) survives;
+  // only the three switches move. gain_controller1 is the one the engine
+  // enables on desktop; gain_controller2 stays as the engine left it.
+  webrtc::AudioProcessing::Config config = audio_processing_->GetConfig();
+  config.echo_canceller.enabled = switches.echo_cancellation;
+  config.noise_suppression.enabled = switches.noise_suppression;
+  config.gain_controller1.enabled = switches.auto_gain_control;
+  audio_processing_->ApplyConfig(config);
+  RTC_LOG(LS_INFO) << "set_audio_processing: aec=" << switches.echo_cancellation
+                   << " ns=" << switches.noise_suppression
+                   << " agc=" << switches.auto_gain_control;
+}
+
 std::shared_ptr<AudioTrack> PeerConnectionFactory::create_device_audio_track(
-    rust::String label) const {
-  // Create an audio source that uses the ADM for capture
+    rust::String label,
+    AudioSourceOptions options) const {
+  // Create an audio source that uses the ADM for capture. Its AudioOptions
+  // are re-applied to the APM by the send path on every publish and unmute
+  // (measured from the engine's log), so they carry the same switches
+  // set_audio_processing applies directly.
   webrtc::AudioOptions audio_options;
-  audio_options.echo_cancellation = true;
-  audio_options.auto_gain_control = true;
-  audio_options.noise_suppression = true;
+  audio_options.echo_cancellation = options.echo_cancellation;
+  audio_options.auto_gain_control = options.auto_gain_control;
+  audio_options.noise_suppression = options.noise_suppression;
 
   webrtc::scoped_refptr<webrtc::AudioSourceInterface> audio_source =
       peer_factory_->CreateAudioSource(audio_options);

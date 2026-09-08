@@ -18,6 +18,7 @@ use std::{
 };
 
 use lazy_static::lazy_static;
+use libwebrtc::audio_source::AudioSourceOptions;
 use libwebrtc::prelude::*;
 use parking_lot::Mutex;
 use thiserror::Error;
@@ -57,6 +58,10 @@ pub struct WebRtcRuntimeInitializedError;
 pub struct LkRuntime {
     pc_factory: PeerConnectionFactory,
     zero_playout_delay: bool,
+    /// The software audio processing switches as last applied to the
+    /// factory's APM (`PlatformAudio::configure_audio_processing`). All on
+    /// by default, which is what the voice engine sets at init.
+    audio_processing_options: Mutex<AudioSourceOptions>,
 }
 
 impl Debug for LkRuntime {
@@ -89,7 +94,15 @@ impl LkRuntime {
             let pc_factory = PeerConnectionFactory::with_options(zero_playout_delay, true);
             #[cfg(target_arch = "wasm32")]
             let pc_factory = PeerConnectionFactory::default();
-            let new_runtime = Arc::new(Self { pc_factory, zero_playout_delay });
+            let new_runtime = Arc::new(Self {
+                pc_factory,
+                zero_playout_delay,
+                audio_processing_options: Mutex::new(AudioSourceOptions {
+                    echo_cancellation: true,
+                    noise_suppression: true,
+                    auto_gain_control: true,
+                }),
+            });
             state.runtime = Arc::downgrade(&new_runtime);
             new_runtime
         }
@@ -97,6 +110,19 @@ impl LkRuntime {
 
     pub fn pc_factory(&self) -> &PeerConnectionFactory {
         &self.pc_factory
+    }
+
+    /// The software processing switches as last applied.
+    pub(crate) fn audio_processing_options(&self) -> AudioSourceOptions {
+        *self.audio_processing_options.lock()
+    }
+
+    /// Apply the software processing switches to the factory's APM, for every
+    /// audio send stream, now -- a published microphone follows immediately.
+    pub(crate) fn set_audio_processing_options(&self, options: AudioSourceOptions) {
+        *self.audio_processing_options.lock() = options;
+        #[cfg(not(target_arch = "wasm32"))]
+        self.pc_factory.set_audio_processing(options);
     }
 
     // ===== Device Management Methods =====

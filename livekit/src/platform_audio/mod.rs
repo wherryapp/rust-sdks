@@ -1046,8 +1046,10 @@ impl PlatformAudio {
     pub fn active_aec_type(&self) -> AudioProcessingType {
         if self.is_hardware_aec_available() {
             AudioProcessingType::Hardware
-        } else {
+        } else if self.handle.runtime.audio_processing_options().echo_cancellation {
             AudioProcessingType::Software
+        } else {
+            AudioProcessingType::None
         }
     }
 
@@ -1055,8 +1057,10 @@ impl PlatformAudio {
     pub fn active_agc_type(&self) -> AudioProcessingType {
         if self.is_hardware_agc_available() {
             AudioProcessingType::Hardware
-        } else {
+        } else if self.handle.runtime.audio_processing_options().auto_gain_control {
             AudioProcessingType::Software
+        } else {
+            AudioProcessingType::None
         }
     }
 
@@ -1064,8 +1068,10 @@ impl PlatformAudio {
     pub fn active_ns_type(&self) -> AudioProcessingType {
         if self.is_hardware_ns_available() {
             AudioProcessingType::Hardware
-        } else {
+        } else if self.handle.runtime.audio_processing_options().noise_suppression {
             AudioProcessingType::Software
+        } else {
+            AudioProcessingType::None
         }
     }
 
@@ -1079,7 +1085,9 @@ impl PlatformAudio {
     /// - **iOS**: `prefer_hardware_processing` is ignored (always uses VPIO)
     /// - **Android**: When `prefer_hardware_processing` is `false`, hardware
     ///   effects are disabled and WebRTC's software APM is used instead
-    /// - **Desktop**: `prefer_hardware_processing` is ignored (hardware not available)
+    /// - **Desktop**: `prefer_hardware_processing` is ignored (hardware not available).
+    ///   The three switches configure WebRTC's software APM directly and take
+    ///   effect immediately, for a microphone that is already published too.
     ///
     /// # Example
     ///
@@ -1099,6 +1107,14 @@ impl PlatformAudio {
     /// ```
     pub fn configure_audio_processing(&self, options: AudioProcessingOptions) -> AudioResult<()> {
         let runtime = &self.handle.runtime;
+
+        // The software side: WebRTC's APM, reconfigured live for every send
+        // stream. On desktop this is the only side there is.
+        runtime.set_audio_processing_options(libwebrtc::audio_source::AudioSourceOptions {
+            echo_cancellation: options.echo_cancellation,
+            noise_suppression: options.noise_suppression,
+            auto_gain_control: options.auto_gain_control,
+        });
 
         // Configure hardware vs software processing preference
         // When prefer_hardware_processing is false, we disable hardware effects
@@ -1151,6 +1167,10 @@ impl PlatformAudio {
     /// * `enable` - `true` to enable AEC, `false` to disable
     /// * `prefer_hardware` - `true` to prefer hardware AEC on supported devices
     pub fn set_echo_cancellation(&self, enable: bool, prefer_hardware: bool) -> AudioResult<()> {
+        let runtime = &self.handle.runtime;
+        let mut options = runtime.audio_processing_options();
+        options.echo_cancellation = enable;
+        runtime.set_audio_processing_options(options);
         if self.is_hardware_aec_available() {
             let enable_hw = enable && prefer_hardware;
             if !self.handle.runtime.enable_builtin_aec(enable_hw) {
@@ -1167,6 +1187,10 @@ impl PlatformAudio {
     /// * `enable` - `true` to enable AGC, `false` to disable
     /// * `prefer_hardware` - `true` to prefer hardware AGC on supported devices
     pub fn set_auto_gain_control(&self, enable: bool, prefer_hardware: bool) -> AudioResult<()> {
+        let runtime = &self.handle.runtime;
+        let mut options = runtime.audio_processing_options();
+        options.auto_gain_control = enable;
+        runtime.set_audio_processing_options(options);
         if self.is_hardware_agc_available() {
             let enable_hw = enable && prefer_hardware;
             if !self.handle.runtime.enable_builtin_agc(enable_hw) {
@@ -1183,6 +1207,10 @@ impl PlatformAudio {
     /// * `enable` - `true` to enable NS, `false` to disable
     /// * `prefer_hardware` - `true` to prefer hardware NS on supported devices
     pub fn set_noise_suppression(&self, enable: bool, prefer_hardware: bool) -> AudioResult<()> {
+        let runtime = &self.handle.runtime;
+        let mut options = runtime.audio_processing_options();
+        options.noise_suppression = enable;
+        runtime.set_audio_processing_options(options);
         if self.is_hardware_ns_available() {
             let enable_hw = enable && prefer_hardware;
             if !self.handle.runtime.enable_builtin_ns(enable_hw) {

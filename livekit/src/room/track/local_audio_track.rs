@@ -64,9 +64,15 @@ impl LocalAudioTrack {
                 // Create an audio track that uses the Platform ADM for capture.
                 // Use PlatformAudio::new() to enable platform audio before creating this track.
                 use libwebrtc::peer_connection_factory::native::PeerConnectionFactoryExt;
-                LkRuntime::instance()
-                    .pc_factory()
-                    .create_device_audio_track(&libwebrtc::native::create_random_uuid())
+                // The source carries the switches PlatformAudio was last
+                // configured with: the send path re-applies a source's
+                // options to the APM on every publish and unmute, so a track
+                // created with the engine's defaults would undo them.
+                let runtime = LkRuntime::instance();
+                runtime.pc_factory().create_device_audio_track(
+                    &libwebrtc::native::create_random_uuid(),
+                    runtime.audio_processing_options(),
+                )
             }
             #[allow(unreachable_patterns)]
             _ => panic!("unsupported audio source"),

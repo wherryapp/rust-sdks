@@ -134,8 +134,10 @@ mod tests {
 pub mod native {
     use super::PeerConnectionFactory;
     use crate::{
-        audio_source::native::NativeAudioSource, audio_track::RtcAudioTrack,
-        video_source::native::NativeVideoSource, video_track::RtcVideoTrack,
+        audio_source::{native::NativeAudioSource, AudioSourceOptions},
+        audio_track::RtcAudioTrack,
+        video_source::native::NativeVideoSource,
+        video_track::RtcVideoTrack,
     };
 
     pub trait PeerConnectionFactoryExt {
@@ -143,8 +145,18 @@ pub mod native {
         fn create_audio_track(&self, label: &str, source: NativeAudioSource) -> RtcAudioTrack;
 
         /// Create an audio track that uses the Platform ADM for capture.
-        /// The track will capture audio from the selected recording device.
-        fn create_device_audio_track(&self, label: &str) -> RtcAudioTrack;
+        /// The track will capture audio from the selected recording device,
+        /// with `options` as the source's processing switches (the send
+        /// path applies them to the APM whenever the track is sent).
+        fn create_device_audio_track(
+            &self,
+            label: &str,
+            options: AudioSourceOptions,
+        ) -> RtcAudioTrack;
+
+        /// Configure the software audio processing module (echo cancellation,
+        /// noise suppression, gain control) for every audio send stream, live.
+        fn set_audio_processing(&self, options: AudioSourceOptions);
 
         // Device enumeration
         fn playout_devices(&self) -> i16;
@@ -214,8 +226,16 @@ pub mod native {
             self.handle.create_audio_track(label, source)
         }
 
-        fn create_device_audio_track(&self, label: &str) -> RtcAudioTrack {
-            self.handle.create_device_audio_track(label)
+        fn create_device_audio_track(
+            &self,
+            label: &str,
+            options: AudioSourceOptions,
+        ) -> RtcAudioTrack {
+            self.handle.create_device_audio_track(label, options)
+        }
+
+        fn set_audio_processing(&self, options: AudioSourceOptions) {
+            self.handle.set_audio_processing(options)
         }
 
         fn playout_devices(&self) -> i16 {
