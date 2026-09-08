@@ -44,6 +44,9 @@ pub mod ffi {
 
         fn add_sink(self: &AudioTrack, sink: &SharedPtr<NativeAudioSink>);
         fn remove_sink(self: &AudioTrack, sink: &SharedPtr<NativeAudioSink>);
+        /// Playout gain for a remote track, 0.0 (silent) to 10.0; 1.0 is
+        /// unity. A no-op for a local track, whose source ignores it.
+        fn set_volume(self: &AudioTrack, volume: f64);
         fn new_native_audio_sink(
             observer: Box<AudioSinkWrapper>,
             sample_rate: i32,

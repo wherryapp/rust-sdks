@@ -26,6 +26,13 @@ pub struct RtcAudioTrack {
 
 impl RtcAudioTrack {
     media_stream_track!();
+
+    /// Playout gain for a remote track: 0.0 is silent, 1.0 unity, up to
+    /// 10.0. Applied at the receive stream, so it affects only what this
+    /// peer hears. A no-op for a local track.
+    pub fn set_volume(&self, volume: f64) {
+        self.handle.set_volume(volume)
+    }
 }
 
 impl Debug for RtcAudioTrack {
