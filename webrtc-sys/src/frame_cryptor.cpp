@@ -177,8 +177,21 @@ FrameCryptor::~FrameCryptor() {
   if (sender_) {
     sender_->SetEncoderToPacketizerFrameTransformer(nullptr);
   }
+  // Receivers: audio only. libwebrtc's audio receiver treats a null
+  // transformer as "none"; its video receiver (RtpVideoStreamReceiver2)
+  // wraps whatever it is handed in a RtpVideoStreamReceiverFrameTransformerDelegate
+  // and dereferences it in Init(), so a null there is a segfault on the
+  // worker thread the moment a video cryptor is destroyed -- which is every
+  // unsubscribe, every remote unpublish and every room close once a video
+  // track has been received. A video receiver therefore keeps its
+  // transformer attached until the peer connection goes, the pre-patch
+  // behaviour, and leaks that one thread per video track per room; the
+  // audio receivers, which are every call, are still reclaimed.
   if (receiver_) {
-    receiver_->SetDepacketizerToDecoderFrameTransformer(nullptr);
+    auto track = receiver_->track();
+    if (track && track->kind() == "audio") {
+      receiver_->SetDepacketizerToDecoderFrameTransformer(nullptr);
+    }
   }
 }
 
