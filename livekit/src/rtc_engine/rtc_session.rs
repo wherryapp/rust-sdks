@@ -1675,7 +1675,7 @@ impl SessionInner {
                     );
                 }
             }
-            RtcEvent::DataChannelBufferedAmountChange { sent, amount: _, kind } => {
+            RtcEvent::DataChannelBufferedAmountChange { sent, kind } => {
                 let ev = DataChannelEvent {
                     kind,
                     detail: DataChannelEventDetail::BufferedAmountChange(sent),
@@ -1993,6 +1993,13 @@ impl SessionInner {
     async fn close(&self, reason: DisconnectReason) {
         self.closed.store(true, Ordering::Release);
         self.pc_state_notify.notify_waiters();
+        // A fast-publish negotiation waiting for its answer holds this session
+        // (and so both PeerConnections) for up to 10 s, and the signal task that
+        // would deliver the answer is already gone. `notify_one` keeps a permit
+        // if the loop is not yet waiting, so it cannot be missed; the loop sees
+        // `closed` and stops.
+        self.negotiation_queue.waiting_for_answer.store(false, Ordering::Release);
+        self.negotiation_queue.waker.notify_one();
 
         // Both awaits below are unbounded, and `PeerTransport::close` is synchronous, so
         // closing here — before the future can suspend — is what stops a cancelled
@@ -2347,6 +2354,14 @@ impl SessionInner {
 
     async fn execute_negotiation_with_retry(self: &Arc<Self>) {
         loop {
+            // Nothing to negotiate on a closed session, and no answer will come.
+            if self.closed.load(Ordering::Acquire) {
+                log::debug!("session closed, abandoning publisher negotiation");
+                self.negotiation_queue.waiting_for_answer.store(false, Ordering::Release);
+                *self.negotiation_queue.state.lock() = NegotiationState::Idle;
+                break;
+            }
+
             log::debug!("negotiating the publisher (fast mode)");
 
             self.negotiation_queue.waiting_for_answer.store(true, Ordering::Release);
@@ -2363,6 +2378,12 @@ impl SessionInner {
 
                 tokio::select! {
                     _ = self.negotiation_queue.waker.notified() => {
+                        if self.closed.load(Ordering::Acquire) {
+                            log::debug!("session closed while waiting for answer");
+                            self.negotiation_queue.waiting_for_answer.store(false, Ordering::Release);
+                            *self.negotiation_queue.state.lock() = NegotiationState::Idle;
+                            break;
+                        }
                         log::debug!("answer received successfully");
                     }
                     _ = &mut timeout => {

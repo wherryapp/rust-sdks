@@ -759,8 +759,14 @@ impl Room {
 
         e2ee_manager.on_state_changed({
             let dispatcher = dispatcher.clone();
-            let inner = inner.clone();
+            // Weak: the manager is a field of `RoomSession`, so a strong capture
+            // here is a cycle that keeps the session -- and through the engine
+            // every PeerConnection it ever created -- alive after `close()`.
+            let weak_inner = Arc::downgrade(&inner);
             move |participant_identity, state| {
+                let Some(inner) = weak_inner.upgrade() else {
+                    return;
+                };
                 // Forward e2ee events to the room
                 // (Ignore if the participant is not in the room anymore)
 
@@ -1164,7 +1170,7 @@ impl RoomSession {
         Ok(())
     }
 
-    async fn close(&self, reason: DisconnectReason) -> RoomResult<()> {
+    async fn close(self: &Arc<Self>, reason: DisconnectReason) -> RoomResult<()> {
         let Some(handle) = self.handle.lock().await.take() else { Err(RoomError::AlreadyClosed)? };
 
         // remove published tracks
@@ -1184,6 +1190,27 @@ impl RoomSession {
         let _ = handle.remote_dt_forward_task.await;
         let _ = handle.remote_dt_task.await;
         let _ = handle.room_handle.await;
+
+        // Release every remote participant still in the room, the way a full
+        // reconnect does (`handle_restarting`). Each remote publication holds
+        // callbacks that capture its participant, and the participant holds
+        // the publication and the `RtcEngine`: a cycle that `remove_publication`
+        // is the only thing to break. Left in place, it keeps the engine's
+        // session -- its PeerConnection(s), every transceiver, and each subscribed
+        // track's `RtpReceiver` -- alive for the life of the process, which is
+        // where a video receiver's frame transformer (and its thread) lives.
+        //
+        // Only after `room_task` has been joined: until then it can still
+        // handle an engine event queued before the close (its `select!` is
+        // unbiased, and it awaits a handler already in flight), and a
+        // `ParticipantUpdate` or track event handled after this loop would
+        // re-create a participant or publication and re-form the cycle. Before
+        // `dispatcher.clear()`, so the events it emits still reach listeners.
+        let participants: Vec<RemoteParticipant> =
+            self.remote_participants.read().values().cloned().collect();
+        for participant in participants {
+            self.clone().handle_participant_disconnect(participant);
+        }
 
         self.dispatcher.clear();
         Ok(())
